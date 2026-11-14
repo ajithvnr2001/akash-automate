@@ -1,0 +1,58 @@
+name: CI Validation
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: Validate Scripts & SDL Generation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Validate Bash Bootstrap Syntax
+        run: |
+          echo "Checking bootstrap.sh syntax..."
+          bash -n bootstrap.sh
+          echo "bootstrap.sh syntax is valid!"
+
+      - name: Validate PowerShell Scripts
+        shell: pwsh
+        run: |
+          $scripts = Get-ChildItem -Path . -Filter "*.ps1"
+          $hasErrors = $false
+          foreach ($script in $scripts) {
+              $errors = $null
+              [System.Management.Automation.PSParser]::Tokenize((Get-Content $script.FullName -Raw), [ref]$errors) | Out-Null
+              if ($errors.Count -gt 0) {
+                  Write-Error "Syntax error in $($script.Name): $($errors | Out-String)"
+                  $hasErrors = $true
+              } else {
+                  Write-Host "OK: $($script.Name)"
+              }
+          }
+          if ($hasErrors) { exit 1 }
+
+      - name: Test SDL Rendering
+        shell: pwsh
+        run: |
+          $testKey = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGdummykeyfortestingpurposesonly1234567890 akash-ci"
+          $testPass = "CiTestPassword1234567890ABCDEF"
+          $sdl = & ./render-sdl.ps1 -PublicKey $testKey -Password $testPass -Cpu 4.0 -Memory 16Gi -Storage 250Gi
+          if (-not $sdl -or $sdl.Length -lt 200) {
+              Write-Error "Rendered SDL is empty or too short."
+              exit 1
+          }
+          Write-Host "Rendered SDL length: $($sdl.Length) bytes"
+          Set-Content -Path ./rendered-test.yaml -Value $sdl -NoNewline
+
+      - name: Validate YAML Syntax
+        run: |
+          python3 -c "import yaml; yaml.safe_load(open('rendered-test.yaml'))"
+          echo "Rendered SDL YAML is completely valid!"

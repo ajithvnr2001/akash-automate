@@ -1,0 +1,77 @@
+name: Akash Management Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Action to execute'
+        required: true
+        default: 'status'
+        type: choice
+        options:
+          - status
+          - deploy
+          - destroy
+      cpu:
+        description: 'CPU cores (deploy only)'
+        required: false
+        default: '4'
+      memory:
+        description: 'Memory allocation (deploy only)'
+        required: false
+        default: '16Gi'
+      storage:
+        description: 'Disk storage (deploy only)'
+        required: false
+        default: '250Gi'
+      runtime_hours:
+        description: 'Runtime limit in hours (deploy only)'
+        required: false
+        default: '24'
+
+jobs:
+  manage:
+    name: Execute Akash Operation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Verify Akash API Key Secret
+        env:
+          AKASH_KEY: ${{ secrets.AKASH_API_KEY }}
+        run: |
+          if [ -z "$AKASH_KEY" ]; then
+            echo "ERROR: AKASH_API_KEY secret is not set in GitHub repository settings!"
+            echo "Please add your Akash Console API key to Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Run Akash Action (${{ github.event.inputs.action }})
+        shell: pwsh
+        env:
+          AKASH_API_KEY: ${{ secrets.AKASH_API_KEY }}
+        run: |
+          $action = "${{ github.event.inputs.action }}"
+          Write-Host "Executing action: $action"
+
+          switch ($action) {
+              'status' {
+                  & ./status.ps1
+              }
+              'deploy' {
+                  $cpu = [double]"${{ github.event.inputs.cpu }}"
+                  $mem = "${{ github.event.inputs.memory }}"
+                  $storage = "${{ github.event.inputs.storage }}"
+                  $hours = [int]"${{ github.event.inputs.runtime_hours }}"
+                  & ./deploy.ps1 -Cpu $cpu -Memory $mem -Storage $storage -RuntimeLimitHours $hours
+              }
+              'destroy' {
+                  & ./destroy.ps1
+              }
+              default {
+                  Write-Error "Unknown action: $action"
+                  exit 1
+              }
+          }

@@ -1,0 +1,38 @@
+# ==============================================================================
+# Git Ignore for akash-automate
+# Protects private keys, API credentials, and deployment state
+# ==============================================================================
+
+# Private SSH keys and PuTTY keys
+keys/
+*.ppk
+*.openssh
+*.pem
+*.key
+id_ed25519*
+id_rsa*
+akash_vm_ed25519*
+
+# Akash Console API credentials and deployment state
+state/api-key.txt
+state/*.json
+state/*.ssh
+state/*.yaml
+
+# Deployment logs
+logs/
+*.log
+
+# Environment files
+.env
+.agent-env
+*.tmp
+
+# Windows artifacts
+NUL
+Thumbs.db
+Desktop.ini
+
+# IDE & Editor files
+.vscode/
+.idea/
