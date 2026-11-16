@@ -233,16 +233,6 @@ def push(session_id=None, session_name=None):
         with open(source_db, "rb") as f:
             db_bytes = f.read()
 
-    for t in get_db_paths():
-        if t != source_db and (os.path.exists(os.path.dirname(t)) or ("/home/akash" in t and os.path.exists("/home/akash"))):
-            try:
-                os.makedirs(os.path.dirname(t), exist_ok=True)
-                with open(t, "wb") as f:
-                    f.write(db_bytes)
-                if "/home/akash" in t:
-                    shutil.chown(t, user="akash", group="akash")
-            except Exception:
-                pass
 
     compressed_bytes = gzip.compress(db_bytes, compresslevel=6)
     b64_data = base64.b64encode(compressed_bytes).decode("ascii")
@@ -376,6 +366,17 @@ def status():
 
 def watch(session_id=None, interval=2):
     session_id = session_id or DEFAULT_SESSION_ID
+    lock_file = "/tmp/opencode-sync-watch.lock"
+    try:
+        import fcntl
+        lock_fd = open(lock_file, "w")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        lock_fd.write(str(os.getpid()))
+        lock_fd.flush()
+    except Exception:
+        print("[opencode-sync] Watcher daemon already running. Exiting.")
+        return 0
+
     print(f"[opencode-sync] Real-time watcher active for session '{session_id}' (polling every {interval}s)...")
     last_mtimes = {}
     while True:
