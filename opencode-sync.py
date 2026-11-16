@@ -94,6 +94,63 @@ def get_headers():
 # ------------------------------------------------------------------------------
 # Core Actions: PUSH, PULL, STATUS, WATCH
 # ------------------------------------------------------------------------------
+OPENCODE_MIGRATIONS = [
+    '20260127222353_familiar_lady_ursula',
+    '20260211171708_add_project_commands',
+    '20260213144116_wakeful_the_professor',
+    '20260225215848_workspace',
+    '20260227213759_add_session_workspace_id',
+    '20260228203230_blue_harpoon',
+    '20260303231226_add_workspace_fields',
+    '20260309230000_move_org_to_state',
+    '20260312043431_session_message_cursor',
+    '20260323234822_events',
+    '20260410174513_workspace-name',
+    '20260413175956_chief_energizer',
+    '20260423070820_add_icon_url_override',
+    '20260427172553_slow_nightmare',
+    '20260428004200_add_session_path',
+    '20260501142318_next_venus',
+    '20260504145000_add_sync_owner',
+    '20260507164347_add_workspace_time',
+    '20260510033149_session_usage',
+    '20260511000411_data_migration_state',
+    '20260511173437_session-metadata',
+    '20260601010001_normalize_storage_paths',
+    '20260601202201_amazing_prowler',
+    '20260602002951_lowly_union_jack',
+    '20260602182828_add_project_directories',
+    '20260603001617_session_message_projection_indexes',
+    '20260603040000_session_message_projection_order',
+    '20260603141458_session_input_inbox',
+    '20260603160727_jittery_ezekiel_stane',
+    '20260604172448_event_sourced_session_input',
+    '20260605003541_add_session_context_snapshot',
+    '20260605042240_add_context_epoch_agent',
+    '20260611035744_credential',
+    '20260611192811_lush_chimera',
+    '20260612174303_project_dir_strategy',
+    '20260622142730_simplify_session_context_epoch',
+    '20260622170816_reset_v2_session_state',
+    '20260622202450_simplify_session_input'
+]
+
+def _ensure_migrations(db_path):
+    try:
+        conn = sqlite3.connect(db_path)
+        cur = conn.cursor()
+        cur.execute("CREATE TABLE IF NOT EXISTS migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL)")
+        cur.execute("SELECT id FROM migration")
+        existing = {r[0] for r in cur.fetchall()}
+        now_ms = int(time.time() * 1000)
+        for m in OPENCODE_MIGRATIONS:
+            if m not in existing:
+                cur.execute("INSERT OR REPLACE INTO migration (id, time_completed) VALUES (?, ?)", (m, now_ms))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
 def pull(session_id=None):
     session_id = session_id or DEFAULT_SESSION_ID
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -138,6 +195,7 @@ def pull(session_id=None):
                 os.makedirs(os.path.dirname(t), exist_ok=True)
                 with open(t, "wb") as f:
                     f.write(db_bytes)
+                _ensure_migrations(t)
                 # Fix ownership if writing to /home/akash
                 if "/home/akash" in t:
                     try:
