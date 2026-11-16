@@ -181,9 +181,60 @@ Run any of the pre-installed autonomous coding agents:
 
 ---
 
-## Setting Environment Variables & API Keys
+## One-Click Deployment With Different APIs
 
-To pass API keys (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `DEEPSEEK_API_KEY`) from your local machine into the running box without logging in interactively:
+You can deploy in **a single command or click** while using different Akash accounts AND injecting different AI / Cloud provider APIs:
+
+### 1. Using Different Akash API Keys / Accounts
+```powershell
+# One-click deploy with a specific Akash Console API key:
+.\deploy.ps1 -AkashApiKey "ac.sk.production...."
+
+# One-click deploy with a named account profile (looks for state\api-key-<account>.txt):
+.\deploy.ps1 -Account "team-project"
+```
+
+### 2. Auto-Injecting Different AI & Cloud APIs into the Box
+You don't need to configure keys after connecting. `deploy.ps1` automatically injects them during provisioning:
+
+#### Option A: Auto-load from `.env` (Recommended)
+1. Copy the template:
+   ```powershell
+   Copy-Item .env.example .env
+   ```
+2. Put any combination of API keys into `.env` (OpenAI, Anthropic Claude, DeepSeek, Gemini, OpenRouter, AWS, Cloudflare R2, Azure, OCI).
+3. Run one command:
+   ```powershell
+   .\deploy.ps1
+   ```
+   All keys are immediately available in `/root/.agent-env` and `/home/akash/.agent-env` upon login!
+
+#### Option B: Pass API Keys Directly to `deploy.ps1`
+```powershell
+.\deploy.ps1 -ApiKeys @{
+    ANTHROPIC_API_KEY = "sk-ant-api03-..."
+    OPENAI_API_KEY    = "sk-proj-..."
+    DEEPSEEK_API_KEY  = "sk-..."
+    GEMINI_API_KEY    = "AIzaSy..."
+    OPENROUTER_API_KEY = "sk-or-..."
+}
+```
+
+#### Option C: Specify a Custom Env File
+```powershell
+.\deploy.ps1 -EnvFile "D:\keys\my-agent.env"
+```
+
+### 3. One-Click Deployment from GitHub Actions
+1. Go to your GitHub repository: [ajithvnr2001/akash-automate](https://github.com/ajithvnr2001/akash-automate)
+2. Click **Actions** → **Akash Management Workflow** → **Run workflow**.
+3. Choose `deploy`, optionally paste any custom Akash key or application API keys (`KEY=VALUE`), and click **Run workflow**.
+
+---
+
+## Setting Environment Variables & API Keys (After Deployment)
+
+If the box is already running and you want to push additional API keys without restarting:
 
 ```powershell
 .\set-api-keys.ps1 -FromState -Dseq <DSEQ> -Vars @{

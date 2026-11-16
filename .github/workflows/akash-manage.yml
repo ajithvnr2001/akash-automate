@@ -12,6 +12,14 @@ on:
           - status
           - deploy
           - destroy
+      akash_api_key:
+        description: 'Custom Akash API Key (leave empty to use repository secret AKASH_API_KEY)'
+        required: false
+        default: ''
+      app_api_keys:
+        description: 'App/AI API Keys to inject into container (KEY=VALUE per line, e.g. ANTHROPIC_API_KEY=sk-...)'
+        required: false
+        default: ''
       cpu:
         description: 'CPU cores (deploy only)'
         required: false
@@ -38,20 +46,37 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Verify Akash API Key Secret
+      - name: Resolve Akash API Key
+        id: auth
         env:
-          AKASH_KEY: ${{ secrets.AKASH_API_KEY }}
+          INPUT_KEY: ${{ github.event.inputs.akash_api_key }}
+          SECRET_KEY: ${{ secrets.AKASH_API_KEY }}
         run: |
-          if [ -z "$AKASH_KEY" ]; then
-            echo "ERROR: AKASH_API_KEY secret is not set in GitHub repository settings!"
-            echo "Please add your Akash Console API key to Settings -> Secrets and variables -> Actions."
+          if [ -n "$INPUT_KEY" ]; then
+            echo "Using Akash API key passed via workflow input."
+            echo "KEY=$INPUT_KEY" >> $GITHUB_OUTPUT
+          elif [ -n "$SECRET_KEY" ]; then
+            echo "Using Akash API key from repository secret AKASH_API_KEY."
+            echo "KEY=$SECRET_KEY" >> $GITHUB_OUTPUT
+          else
+            echo "ERROR: No Akash API key provided in input or repository secrets!"
             exit 1
+          fi
+
+      - name: Setup App API Keys (.env)
+        env:
+          APP_KEYS: ${{ github.event.inputs.app_api_keys }}
+        run: |
+          if [ -n "$APP_KEYS" ]; then
+            echo "Writing application API keys to .env..."
+            printf "%s\n" "$APP_KEYS" > .env
+            echo "Created .env with $(wc -l < .env) line(s)"
           fi
 
       - name: Run Akash Action (${{ github.event.inputs.action }})
         shell: pwsh
         env:
-          AKASH_API_KEY: ${{ secrets.AKASH_API_KEY }}
+          AKASH_API_KEY: ${{ steps.auth.outputs.KEY }}
         run: |
           $action = "${{ github.event.inputs.action }}"
           Write-Host "Executing action: $action"
@@ -65,7 +90,16 @@ jobs:
                   $mem = "${{ github.event.inputs.memory }}"
                   $storage = "${{ github.event.inputs.storage }}"
                   $hours = [int]"${{ github.event.inputs.runtime_hours }}"
-                  & ./deploy.ps1 -Cpu $cpu -Memory $mem -Storage $storage -RuntimeLimitHours $hours
+                  $deployParams = @{
+                      Cpu               = $cpu
+                      Memory            = $mem
+                      Storage           = $storage
+                      RuntimeLimitHours = $hours
+                  }
+                  if (Test-Path ".env") {
+                      $deployParams['EnvFile'] = ".env"
+                  }
+                  & ./deploy.ps1 @deployParams
               }
               'destroy' {
                   & ./destroy.ps1

@@ -7,19 +7,30 @@
     .\status.ps1
 #>
 [CmdletBinding()]
-param()
+param(
+    [string]$AkashApiKey,
+    [string]$Account
+)
 
 $ErrorActionPreference = 'Stop'
 $API = 'https://console-api.akash.network'
 
-# Fall back to the saved key so a fresh shell does not have to re-export it.
-$keyFile = Join-Path $PSScriptRoot 'state\api-key.txt'
-if (-not $env:AKASH_API_KEY -and (Test-Path $keyFile)) {
-    $env:AKASH_API_KEY = (Get-Content $keyFile -Raw).Trim()
+$apiKey = $null
+if ($AkashApiKey) {
+    $apiKey = $AkashApiKey.Trim()
+} elseif ($Account) {
+    $acctFile = Join-Path $PSScriptRoot "state\api-key-$Account.txt"
+    if (Test-Path $acctFile) { $apiKey = (Get-Content $acctFile -Raw).Trim() }
+    else { throw "Account API key file not found: $acctFile" }
+} elseif ($env:AKASH_API_KEY) {
+    $apiKey = $env:AKASH_API_KEY.Trim()
+} else {
+    $keyFile = Join-Path $PSScriptRoot 'state\api-key.txt'
+    if (Test-Path $keyFile) { $apiKey = (Get-Content $keyFile -Raw).Trim() }
 }
 
-if (-not $env:AKASH_API_KEY) { throw 'AKASH_API_KEY is not set.' }
-$headers = @{ 'x-api-key' = $env:AKASH_API_KEY }
+if (-not $apiKey) { throw 'No Akash API key found. Pass -AkashApiKey "ac.sk...", -Account <name>, or set $env:AKASH_API_KEY' }
+$headers = @{ 'x-api-key' = $apiKey }
 
 $bal = (Invoke-RestMethod -Uri "$API/v1/balances" -Headers $headers).data
 

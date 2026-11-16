@@ -17,11 +17,29 @@
     Do not skip the providers known to fail port forwarding.
 
 .EXAMPLE
-    $env:AKASH_API_KEY = "ac.sk.production...."
+    # 1. Simple deploy using saved key:
     .\deploy.ps1
+
+    # 2. One-click deploy using a specific Akash API key:
+    .\deploy.ps1 -AkashApiKey "ac.sk.production...."
+
+    # 3. One-click deploy injecting different AI/Cloud APIs:
+    .\deploy.ps1 -ApiKeys @{
+        ANTHROPIC_API_KEY = "sk-ant-..."
+        OPENAI_API_KEY    = "sk-proj-..."
+        DEEPSEEK_API_KEY  = "sk-..."
+        GEMINI_API_KEY    = "AIzaSy..."
+    }
+
+    # 4. One-click deploy auto-loading all APIs from a .env file:
+    .\deploy.ps1 -EnvFile ".\.env"
 #>
 [CmdletBinding()]
 param(
+    [string]$AkashApiKey,
+    [string]$Account,
+    [hashtable]$ApiKeys = @{},
+    [string]$EnvFile,
     [double]$Cpu = 4.0,
     [string]$Memory = '16Gi',
     [string]$Storage = '250Gi',
@@ -60,17 +78,25 @@ function Write-Log {
 }
 
 function Get-ApiKey {
-    if (-not $env:AKASH_API_KEY) {
-        # Persisted fallback so a fresh shell does not have to re-export it.
-        $keyFile = Join-Path $StateDir 'api-key.txt'
-        if (Test-Path $keyFile) {
-            $env:AKASH_API_KEY = (Get-Content $keyFile -Raw).Trim()
+    if ($AkashApiKey) {
+        return $AkashApiKey.Trim()
+    }
+    if ($Account) {
+        $acctFile = Join-Path $StateDir "api-key-$Account.txt"
+        if (Test-Path $acctFile) {
+            return (Get-Content $acctFile -Raw).Trim()
         }
+        throw "Account API key file not found: $acctFile"
     }
-    if (-not $env:AKASH_API_KEY) {
-        throw 'AKASH_API_KEY is not set. Export it first: $env:AKASH_API_KEY = "ac.sk.production...."'
+    if ($env:AKASH_API_KEY) {
+        return $env:AKASH_API_KEY.Trim()
     }
-    return $env:AKASH_API_KEY
+    # Persisted fallback so a fresh shell does not have to re-export it.
+    $keyFile = Join-Path $StateDir 'api-key.txt'
+    if (Test-Path $keyFile) {
+        return (Get-Content $keyFile -Raw).Trim()
+    }
+    throw 'No Akash API key found. Pass -AkashApiKey "ac.sk...", -Account <name>, set $env:AKASH_API_KEY, or save to state\api-key.txt'
 }
 
 function Invoke-AkashApi {
@@ -396,6 +422,46 @@ Host akash-$dseq
 "@
 [System.IO.File]::WriteAllText($sshConfigPath, $sshConfig,
     (New-Object System.Text.UTF8Encoding($false)))
+
+# ------------------------------------------------------------------ auto-inject APIs
+$envVarsToInject = @{}
+
+# Load from default .env or specified -EnvFile
+$autoEnv = if ($EnvFile) { $EnvFile } else { Join-Path $PSScriptRoot '.env' }
+if (Test-Path $autoEnv) {
+    Write-Log "Reading environment variables from $autoEnv"
+    Get-Content $autoEnv | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -and -not $line.StartsWith('#') -and $line -match '^([A-Za-z_][A-Za-z0-9_]*)=(.*)$') {
+            $val = $Matches[2].Trim()
+            if (($val.StartsWith('"') -and $val.EndsWith('"')) -or ($val.StartsWith("'") -and $val.EndsWith("'"))) {
+                $val = $val.Substring(1, $val.Length - 2)
+            }
+            $envVarsToInject[$Matches[1]] = $val
+        }
+    }
+}
+
+# Add from -ApiKeys hashtable (takes precedence)
+if ($ApiKeys -and $ApiKeys.Count -gt 0) {
+    foreach ($k in $ApiKeys.Keys) {
+        $envVarsToInject[$k] = [string]$ApiKeys[$k]
+    }
+}
+
+if ($envVarsToInject.Count -gt 0) {
+    Write-Log "Auto-injecting $($envVarsToInject.Count) API key(s) / environment variable(s) into box..."
+    try {
+        & (Join-Path $PSScriptRoot 'set-api-keys.ps1') `
+            -HostName $endpoint.host `
+            -Port $endpoint.externalPort `
+            -KeyPath $KeyPath `
+            -Vars $envVarsToInject
+        Write-Log "API keys successfully loaded into /root/.agent-env and /home/akash/.agent-env" 'OK'
+    } catch {
+        Write-Log "Warning: Automatic API key injection encountered an issue: $($_.Exception.Message)" 'WARN'
+    }
+}
 
 # ------------------------------------------------------------------ report
 Write-Host ''
