@@ -146,11 +146,11 @@ if [ -n "$PAYLOAD" ]; then
 fi
 
 mv -f "$TMP" "$ENVF"
-chmod 600 "$ENVF"
-[ -d /home/akash ] && cp -f "$ENVF" /home/akash/.agent-env 2>/dev/null && chown akash:akash /home/akash/.agent-env 2>/dev/null || true
+chmod 644 "$ENVF"
+[ -d /home/akash ] && cp -f "$ENVF" /home/akash/.agent-env 2>/dev/null && chown -R akash:akash /home/akash 2>/dev/null || true
 cp -f "$ENVF" /root/.agent-env 2>/dev/null || true
 cp -f "$ENVF" /etc/opencode-supabase.env 2>/dev/null || true
-chmod 600 /etc/opencode-supabase.env 2>/dev/null || true
+chmod 644 /etc/opencode-supabase.env 2>/dev/null || true
 
 # Ensure interactive logins source it.
 for p in /home/akash/.bashrc /root/.bashrc /etc/profile; do
