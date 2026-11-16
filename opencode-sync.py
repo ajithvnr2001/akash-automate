@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-opencode-sync: Transparent Supabase Database & Session Migration for OpenCode
-Automatically persists and restores OpenCode SQLite sessions via Supabase PostgREST.
-Supports high-efficiency gzip compression and automatic session metadata parsing.
+opencode-sync: Transparent Supabase Database and Session Migration for OpenCode
+Supports WAL checkpointing, SQLite atomic backup, and live real-time sync.
 """
 
 import os
@@ -17,9 +16,6 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
-# ------------------------------------------------------------------------------
-# Environment Resolution
-# ------------------------------------------------------------------------------
 def load_env_file(path):
     env = {}
     if not os.path.exists(path):
@@ -44,7 +40,6 @@ def load_env_file(path):
     return env
 
 def get_env_vars():
-    # Priority: os.environ > /config/.agent-env > /root/.agent-env > /home/akash/.agent-env > /etc/opencode-supabase.env > .env
     merged = {}
     for p in [
         "/etc/opencode-supabase.env",
@@ -67,13 +62,10 @@ DEFAULT_SESSION_ID = ENV.get("OPENCODE_SESSION_ID", "default")
 
 def get_db_paths():
     paths = []
-    # 1. User XDG path
     xdg_data = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
     paths.append(os.path.join(xdg_data, "opencode", "opencode.db"))
-    # 2. Standard system locations
     paths.append("/root/.local/share/opencode/opencode.db")
     paths.append("/home/akash/.local/share/opencode/opencode.db")
-    # De-duplicate preserving order
     seen = set()
     result = []
     for p in paths:
@@ -88,68 +80,62 @@ def get_headers():
         "apikey": SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates"
+        "Prefer": "return=representation,resolution=merge-duplicates"
     }
 
-# ------------------------------------------------------------------------------
-# Core Actions: PUSH, PULL, STATUS, WATCH
-# ------------------------------------------------------------------------------
-OPENCODE_MIGRATIONS = [
-    '20260127222353_familiar_lady_ursula',
-    '20260211171708_add_project_commands',
-    '20260213144116_wakeful_the_professor',
-    '20260225215848_workspace',
-    '20260227213759_add_session_workspace_id',
-    '20260228203230_blue_harpoon',
-    '20260303231226_add_workspace_fields',
-    '20260309230000_move_org_to_state',
-    '20260312043431_session_message_cursor',
-    '20260323234822_events',
-    '20260410174513_workspace-name',
-    '20260413175956_chief_energizer',
-    '20260423070820_add_icon_url_override',
-    '20260427172553_slow_nightmare',
-    '20260428004200_add_session_path',
-    '20260501142318_next_venus',
-    '20260504145000_add_sync_owner',
-    '20260507164347_add_workspace_time',
-    '20260510033149_session_usage',
-    '20260511000411_data_migration_state',
-    '20260511173437_session-metadata',
-    '20260601010001_normalize_storage_paths',
-    '20260601202201_amazing_prowler',
-    '20260602002951_lowly_union_jack',
-    '20260602182828_add_project_directories',
-    '20260603001617_session_message_projection_indexes',
-    '20260603040000_session_message_projection_order',
-    '20260603141458_session_input_inbox',
-    '20260603160727_jittery_ezekiel_stane',
-    '20260604172448_event_sourced_session_input',
-    '20260605003541_add_session_context_snapshot',
-    '20260605042240_add_context_epoch_agent',
-    '20260611035744_credential',
-    '20260611192811_lush_chimera',
-    '20260612174303_project_dir_strategy',
-    '20260622142730_simplify_session_context_epoch',
-    '20260622170816_reset_v2_session_state',
-    '20260622202450_simplify_session_input'
-]
-
 def _ensure_migrations(db_path):
+    all_migrations = [
+        "1_initial", "2_subtask", "3_session_summary", "4_session_share",
+        "5_session_share_url", "6_session_context", "7_session_permission",
+        "8_agent_directory", "9_project_directory", "10_session_view",
+        "11_session_view_mode", "12_model_variant", "13_agent_mode",
+        "14_session_index", "15_project_icon", "16_part_time", "17_session_cost",
+        "18_session_tokens", "19_session_parent", "20_event_seq", "21_message_time",
+        "22_permission_type", "23_session_starred", "24_session_pinned",
+        "25_session_title_index", "26_message_summary", "27_agent_color",
+        "28_account", "29_agent_default", "30_session_input", "31_part_index",
+        "32_message_index", "33_todo", "34_permission_index", "35_credential",
+        "36_project_archived", "37_agent_prompt", "38_session_tags"
+    ]
     try:
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(db_path, timeout=10)
         cur = conn.cursor()
-        cur.execute("CREATE TABLE IF NOT EXISTS migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL)")
+        cur.execute("CREATE TABLE IF NOT EXISTS migration (id TEXT PRIMARY KEY, time_created INTEGER)")
         cur.execute("SELECT id FROM migration")
         existing = {r[0] for r in cur.fetchall()}
         now_ms = int(time.time() * 1000)
-        for m in OPENCODE_MIGRATIONS:
+        for m in all_migrations:
             if m not in existing:
-                cur.execute("INSERT OR REPLACE INTO migration (id, time_completed) VALUES (?, ?)", (m, now_ms))
+                cur.execute("INSERT OR IGNORE INTO migration (id, time_created) VALUES (?, ?)", (m, now_ms))
         conn.commit()
         conn.close()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[opencode-sync] Migration seed note: {e}")
+
+def snapshot_db(source_db):
+    snap_path = f"{source_db}.snap_{os.getpid()}_{int(time.time()*1000)}"
+    try:
+        conn = sqlite3.connect(source_db, timeout=15)
+        try:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        except Exception:
+            try:
+                conn.execute("PRAGMA wal_checkpoint(FULL)")
+            except Exception:
+                pass
+        bck = sqlite3.connect(snap_path)
+        conn.backup(bck)
+        bck.close()
+        conn.close()
+        with open(snap_path, "rb") as f:
+            data = f.read()
+        return data
+    finally:
+        if os.path.exists(snap_path):
+            try:
+                os.remove(snap_path)
+            except Exception:
+                pass
 
 def pull(session_id=None):
     session_id = session_id or DEFAULT_SESSION_ID
@@ -158,25 +144,20 @@ def pull(session_id=None):
         return 1
 
     url = f"{SUPABASE_URL}/rest/v1/opencode_sessions?id=eq.{session_id}&select=*"
-    headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}"
-    }
-    req = urllib.request.Request(url, headers=headers, method="GET")
+    req = urllib.request.Request(url, headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}"}, method="GET")
     try:
         with urllib.request.urlopen(req) as resp:
-            rows = json.loads(resp.read().decode("utf-8"))
-            if not rows:
-                print(f"[opencode-sync] No existing session found in Supabase for id '{session_id}'. Ready for new session.")
+            data = json.loads(resp.read().decode("utf-8"))
+            if not data:
+                print(f"[opencode-sync] No remote session found for '{session_id}'.")
                 return 0
-            row = rows[0]
-            b64_data = row.get("db_backup_b64")
+            row = data[0]
+            b64_data = row.get("data", {}).get("db_base64", "")
             if not b64_data:
-                print(f"[opencode-sync] Remote session record '{session_id}' has no backup data.")
+                print(f"[opencode-sync] Remote session '{session_id}' has no database payload.")
                 return 0
 
             raw_bytes = base64.b64decode(b64_data)
-            # Check for gzip compression header (0x1f, 0x8b)
             if raw_bytes.startswith(b"\x1f\x8b"):
                 db_bytes = gzip.decompress(raw_bytes)
                 print(f"[opencode-sync] Decompressed {len(raw_bytes):,d} compressed bytes -> {len(db_bytes):,d} DB bytes")
@@ -186,17 +167,29 @@ def pull(session_id=None):
             updated_at = row.get("updated_at", "unknown")
             session_name = row.get("session_name", session_id)
 
-            # Write to all applicable paths
             targets = get_db_paths()
             for t in targets:
-                # If target is /home/akash and directory exists or /home/akash exists
                 if "/home/akash" in t and not os.path.exists("/home/akash"):
                     continue
                 os.makedirs(os.path.dirname(t), exist_ok=True)
+                for ext in ["-wal", "-shm", "-journal"]:
+                    w = t + ext
+                    if os.path.exists(w):
+                        try:
+                            os.remove(w)
+                        except Exception:
+                            pass
                 with open(t, "wb") as f:
                     f.write(db_bytes)
                 _ensure_migrations(t)
-                # Fix ownership if writing to /home/akash
+                try:
+                    c = sqlite3.connect(t, timeout=10)
+                    c.execute("PRAGMA journal_mode=WAL")
+                    c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    c.close()
+                except Exception:
+                    pass
+
                 if "/home/akash" in t:
                     try:
                         shutil.chown(t, user="akash", group="akash")
@@ -220,28 +213,40 @@ def push(session_id=None, session_name=None):
         print("[opencode-sync] WARN: SUPABASE_URL or SUPABASE_KEY not configured. Skipping push.")
         return 1
 
-    # Find the newest local opencode.db
     source_db = None
     newest_mtime = 0
     for p in get_db_paths():
-        if os.path.exists(p):
-            mtime = os.path.getmtime(p)
-            if mtime > newest_mtime:
-                newest_mtime = mtime
-                source_db = p
+        for target in [p, p + "-wal"]:
+            if os.path.exists(target):
+                mtime = os.path.getmtime(target)
+                if mtime > newest_mtime:
+                    newest_mtime = mtime
+                    source_db = p
 
-    if not source_db:
-        print("[opencode-sync] No local OpenCode database found to push.")
+    if not source_db or not os.path.exists(source_db):
         return 0
 
-    with open(source_db, "rb") as f:
-        db_bytes = f.read()
+    try:
+        db_bytes = snapshot_db(source_db)
+    except Exception as e:
+        print(f"[opencode-sync] WARN: Snapshot fallback to raw read: {e}")
+        with open(source_db, "rb") as f:
+            db_bytes = f.read()
 
-    # Compress with gzip for high performance
+    for t in get_db_paths():
+        if t != source_db and (os.path.exists(os.path.dirname(t)) or ("/home/akash" in t and os.path.exists("/home/akash"))):
+            try:
+                os.makedirs(os.path.dirname(t), exist_ok=True)
+                with open(t, "wb") as f:
+                    f.write(db_bytes)
+                if "/home/akash" in t:
+                    shutil.chown(t, user="akash", group="akash")
+            except Exception:
+                pass
+
     compressed_bytes = gzip.compress(db_bytes, compresslevel=6)
     b64_data = base64.b64encode(compressed_bytes).decode("ascii")
 
-    # Extract statistics and session list from SQLite
     stats = {
         "raw_size_bytes": len(db_bytes),
         "compressed_size_bytes": len(compressed_bytes),
@@ -253,59 +258,47 @@ def push(session_id=None, session_name=None):
     }
     extracted_title = session_name
     try:
-        conn = sqlite3.connect(source_db)
+        conn = sqlite3.connect(source_db, timeout=10)
         cur = conn.cursor()
         cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
         tables = [row[0] for row in cur.fetchall()]
         stats["tables"] = tables
-
-        # Try to read session table
         for st in ["session", "sessions"]:
             if st in tables:
                 cur.execute(f"SELECT COUNT(*) FROM {st}")
                 stats["session_count"] = cur.fetchone()[0]
-                try:
-                    cur.execute(f"SELECT * FROM {st} ORDER BY 1 DESC LIMIT 10")
-                    col_names = [d[0] for d in cur.description]
-                    sess_rows = []
-                    for row in cur.fetchall():
-                        sess_dict = dict(zip(col_names, row))
-                        sess_rows.append(sess_dict)
-                        if not extracted_title and "title" in sess_dict and sess_dict["title"]:
-                            extracted_title = sess_dict["title"]
-                    stats["sessions"] = sess_rows
-                except Exception:
-                    pass
-                break
-
-        # Try to read messages count
+                cur.execute(f"SELECT id, title FROM {st} ORDER BY rowid DESC LIMIT 10")
+                s_rows = cur.fetchall()
+                stats["sessions"] = [{"id": r[0], "title": r[1]} for r in s_rows]
+                if s_rows and not extracted_title:
+                    extracted_title = s_rows[0][1]
         for mt in ["message", "messages"]:
             if mt in tables:
                 cur.execute(f"SELECT COUNT(*) FROM {mt}")
                 stats["message_count"] = cur.fetchone()[0]
-                break
-
         conn.close()
     except Exception as e:
-        stats["db_inspect_error"] = str(e)
+        stats["sqlite_inspect_error"] = str(e)
 
-    final_session_name = extracted_title or session_name or f"OpenCode Session ({session_id})"
+    final_session_name = extracted_title or session_name or f"OpenCode Session {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M')}"
 
     payload = {
         "id": session_id,
         "session_name": final_session_name,
-        "data": stats,
-        "db_backup_b64": b64_data,
+        "data": {
+            "db_base64": b64_data,
+            "compressed": True,
+            "compression_type": "gzip",
+            "stats": stats,
+            "session_count": stats.get("session_count", 0),
+            "message_count": stats.get("message_count", 0),
+            "synced_at": datetime.now(timezone.utc).isoformat()
+        },
         "updated_at": datetime.now(timezone.utc).isoformat()
     }
 
     url = f"{SUPABASE_URL}/rest/v1/opencode_sessions"
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers=get_headers(),
-        method="POST"
-    )
+    req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=get_headers(), method="POST")
     try:
         with urllib.request.urlopen(req) as resp:
             print(f"[opencode-sync] SUCCESS: Synced {len(db_bytes):,d} bytes (compressed: {len(compressed_bytes):,d} bytes) to Supabase session '{session_id}' (HTTP {resp.status})")
@@ -333,8 +326,11 @@ def status():
             print(f"Path   : {p}")
             print(f"Size   : {sz:,d} bytes")
             print(f"MTime  : {mtime}")
+            for ext in ["-wal", "-shm"]:
+                if os.path.exists(p + ext):
+                    print(f"  {ext} : {os.path.getsize(p + ext):,d} bytes")
             try:
-                conn = sqlite3.connect(p)
+                conn = sqlite3.connect(p, timeout=5)
                 cur = conn.cursor()
                 cur.execute("SELECT name FROM sqlite_master WHERE type='table'")
                 tables = [r[0] for r in cur.fetchall()]
@@ -378,32 +374,30 @@ def status():
     print("==========================================================")
     return 0
 
-def watch(session_id=None, interval=5):
+def watch(session_id=None, interval=2):
     session_id = session_id or DEFAULT_SESSION_ID
-    print(f"[opencode-sync] Watching local OpenCode DB for changes every {interval}s (Session: {session_id})...")
-    last_mtime = 0
+    print(f"[opencode-sync] Real-time watcher active for session '{session_id}' (polling every {interval}s)...")
+    last_mtimes = {}
     while True:
         try:
+            changed = False
             for p in get_db_paths():
-                if os.path.exists(p):
-                    m = os.path.getmtime(p)
-                    if m > last_mtime:
-                        if last_mtime != 0:
-                            print(f"[opencode-sync] Detected change in {p}. Syncing to Supabase...")
-                            time.sleep(1) # Let write finish
-                            push(session_id=session_id)
-                        last_mtime = m
-                        break
+                for target in [p, p + "-wal"]:
+                    if os.path.exists(target):
+                        m = os.path.getmtime(target)
+                        prev = last_mtimes.get(target, 0)
+                        if prev != 0 and m > prev:
+                            changed = True
+                        last_mtimes[target] = m
+            if changed:
+                time.sleep(1)
+                push(session_id=session_id)
             time.sleep(interval)
         except KeyboardInterrupt:
-            print("\n[opencode-sync] Watcher stopped.")
             break
-        except Exception as e:
+        except Exception:
             time.sleep(interval)
 
-# ------------------------------------------------------------------------------
-# CLI Entrypoint
-# ------------------------------------------------------------------------------
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     arg1 = sys.argv[2] if len(sys.argv) > 2 else None
@@ -416,7 +410,7 @@ def main():
     elif cmd == "status":
         sys.exit(status())
     elif cmd == "watch":
-        interval = int(arg2) if arg2 and arg2.isdigit() else 5
+        interval = int(arg2) if arg2 and arg2.isdigit() else 2
         sys.exit(watch(session_id=arg1, interval=interval))
     else:
         print("Usage: opencode-sync [pull|push|status|watch] [session_id] [session_name]")
