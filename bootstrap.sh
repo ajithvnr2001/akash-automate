@@ -66,6 +66,7 @@ apt-get install -y --no-install-recommends \
   tmux \
   nano \
   vim \
+  less \
   net-tools \
   iputils-ping \
   dnsutils
