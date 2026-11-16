@@ -472,6 +472,9 @@ Write-Host "  Endpoint   : $($endpoint.host):$($endpoint.externalPort)"
 Write-Host "  Username   : root (full root/sudo access; user 'akash' also configured)"
 Write-Host "  Spec       : $Cpu CPU / $Memory / $Storage"
 Write-Host "  Cost       : $price uact/block (~`$$perDay/day)"
+if ($envVarsToInject.ContainsKey('SUPABASE_URL')) {
+    Write-Host "  OpenCode DB: Supabase auto-restore & auto-persist enabled ($($envVarsToInject['SUPABASE_URL']))" -ForegroundColor Cyan
+}
 Write-Host ''
 Write-Host '  SSH key    :' -NoNewline
 Write-Host " $KeyPath"

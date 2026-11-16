@@ -11,10 +11,14 @@ param(
     [Parameter(Mandatory)][int]$Port,
     [Parameter(Mandatory)][string]$ScriptPath,
     [string]$User = 'root',
-    [string]$KeyPath = (Join-Path $PSScriptRoot 'keys\akash_vm_ed25519')
+    [string]$KeyPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
+
+if (-not $KeyPath) {
+    $KeyPath = Join-Path $PSScriptRoot 'keys\akash_vm_ed25519'
+}
 
 if (-not (Test-Path $ScriptPath)) {
     throw "Script not found: $ScriptPath"

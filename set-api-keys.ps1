@@ -148,6 +148,9 @@ fi
 mv -f "$TMP" "$ENVF"
 chmod 600 "$ENVF"
 [ -d /home/akash ] && cp -f "$ENVF" /home/akash/.agent-env 2>/dev/null && chown akash:akash /home/akash/.agent-env 2>/dev/null || true
+cp -f "$ENVF" /root/.agent-env 2>/dev/null || true
+cp -f "$ENVF" /etc/opencode-supabase.env 2>/dev/null || true
+chmod 600 /etc/opencode-supabase.env 2>/dev/null || true
 
 # Ensure interactive logins source it.
 for p in /home/akash/.bashrc /root/.bashrc /etc/profile; do
@@ -156,6 +159,12 @@ for p in /home/akash/.bashrc /root/.bashrc /etc/profile; do
       printf '[ -f /config/.agent-env ] && . /config/.agent-env\n' >> "$p"
   fi
 done
+
+# If opencode-sync is present, trigger automatic session pull from Supabase
+if command -v opencode-sync >/dev/null 2>&1; then
+  echo "--- triggering opencode session restore from Supabase ---"
+  opencode-sync pull || true
+fi
 
 echo "--- variables now set (names only) ---"
 sed 's/=.*/=<set>/' "$ENVF"
@@ -186,7 +195,7 @@ try {
             '-o', 'BatchMode=yes',
             '-i', $KeyPath,
             '-p', "$Port",
-            "akash@$HostName",
+            "root@$HostName",
             "echo $scriptB64 | base64 -d | sh"
         ) `
         -NoNewWindow -Wait -PassThru `
