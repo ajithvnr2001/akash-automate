@@ -532,25 +532,28 @@ SYNC_EOF
 chmod +x /usr/local/bin/opencode-sync
 
 # Transparent OpenCode wrapper with Supabase auto-restore and auto-persist
-OPENCODE_PATH=$(which opencode 2>/dev/null || true)
-if [ -n "$OPENCODE_PATH" ] && [ "$OPENCODE_PATH" != "/usr/local/bin/opencode-bin" ]; then
-  mv "$OPENCODE_PATH" /usr/local/bin/opencode-bin
+REAL_BIN=$(readlink -f /usr/lib/node_modules/opencode-ai/bin/opencode.exe 2>/dev/null || which opencode 2>/dev/null || true)
+if [ ! -f "$REAL_BIN" ]; then
+  REAL_BIN="/usr/lib/node_modules/opencode-ai/node_modules/opencode-linux-x64/bin/opencode"
+fi
+
+if [ -f "$REAL_BIN" ]; then
+  ln -sf "$REAL_BIN" /usr/local/bin/opencode-bin
   cat <<'WRAPPER_EOF' > /usr/local/bin/opencode
 #!/bin/bash
-# Transparent OpenCode wrapper with Supabase session migration
+# Transparent OpenCode wrapper with automated Supabase session sync
 
-# Source environment
 [ -f /config/.agent-env ] && . /config/.agent-env 2>/dev/null || true
 [ -f /root/.agent-env ] && . /root/.agent-env 2>/dev/null || true
 [ -f /home/akash/.agent-env ] && . /home/akash/.agent-env 2>/dev/null || true
 [ -f /etc/opencode-supabase.env ] && . /etc/opencode-supabase.env 2>/dev/null || true
 
-# 1. Pull latest database from Supabase before session starts
+# 1. Pull latest session DB from Supabase before launch (silent for clean TUI)
 if command -v opencode-sync >/dev/null 2>&1; then
-  opencode-sync pull 2>/dev/null || true
+  opencode-sync pull >/dev/null 2>&1 || true
 fi
 
-# 2. Start background sync watcher for active chat persistence
+# 2. Start background sync watcher for ongoing chats
 WATCHER_PID=""
 if command -v opencode-sync >/dev/null 2>&1; then
   opencode-sync watch >/dev/null 2>&1 &
@@ -561,12 +564,12 @@ fi
 /usr/local/bin/opencode-bin "$@"
 EXIT_CODE=$?
 
-# 4. Stop watcher and push final state back to Supabase
+# 4. Stop watcher and push final state to Supabase
 if [ -n "$WATCHER_PID" ]; then
   kill "$WATCHER_PID" 2>/dev/null || true
 fi
 if command -v opencode-sync >/dev/null 2>&1; then
-  opencode-sync push 2>/dev/null || true
+  opencode-sync push >/dev/null 2>&1 || true
 fi
 
 exit $EXIT_CODE
